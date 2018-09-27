@@ -8,11 +8,9 @@
 // Palette array: the NeoPixels blink in this colour. The rate at which
 // they blink is always a 2:1 ratio of on-off time and depends on if the
 // current time is in the 1st, 2nd, 3rd or 4th 15-minute segment, as
-// controlled by the OnTime array. In the final 10 seconds of every
+// controlled by the OnTime array. In the final seconds of every
 // 15-minute segment, the pixels quickly cycle through all of the
 // palette colours.
-//
-// All time is expressed in 100 ms units.
 
 
 #include <Adafruit_NeoPixel.h>
@@ -23,19 +21,19 @@
 #define PIN 1
 #define NUM_PIXELS 4
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_PIXELS, PIN, NEO_GRB + NEO_KHZ800);
+#define PALETTE_SIZE 15
+#define CYCLE_LENGTH 4
+#define LOOP_TIME 100 // milliseconds
+#define TIME_BASE (1000/LOOP_TIME)
+#define RAINBOW_HOLD 1 // loops
+#define RAINBOW_TIME (RAINBOW_HOLD*PALETTE_SIZE*3)
+#define INTRACYCLE_TIME (60*TIME_BASE) // one minute
+#define SUBCYCLE_TIME (PALETTE_SIZE*INTRACYCLE_TIME)
+#define CYCLE_TIME (CYCLE_LENGTH*SUBCYCLE_TIME)
 
-void setup() {
-  // This is for Trinket 5V 16MHz, you can remove these three lines if you are not using a Trinket
-  #if defined (__AVR_ATtiny85__)
-    if (F_CPU == 16000000) clock_prescale_set(clock_div_1);
-  #endif
-  // End of trinket special code
-  strip.begin();
-  strip.show(); // Initialize all pixels to 'off'
-}
+uint32_t OnTime[] = { 20, 16, 10, 8 }; // must have at least CYCLE_LENGTH elements
 
-int Palette[15] = {
+uint32_t Palette[] = { // must have at least PALETTE_SIZE elements
   0x050505, // lch(15 0 0)
   0x161616, // lch(35 0 0)
   0x340C16, // lch(35 30 0)
@@ -50,26 +48,37 @@ int Palette[15] = {
   0xE2A404, // lch(85 80 90)
   0x007555, // lch(65 50 180)
   0x225AEE, // lch(65 50 270)
-  0xA8A8A8 // lch(85 0 0)
+  0xA8A8A8  // lch(85 0 0)
 };
 
-int OnTime[4] = { 20, 16, 10, 8 };
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_PIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
-// sets pixel colour values to the end of 15-minute rainbow
+void setup() {
+  // This is for Trinket 5V 16MHz, you can remove these three lines if you are not using a Trinket
+  #if defined (__AVR_ATtiny85__)
+    if (F_CPU == 16000000) clock_prescale_set(clock_div_1);
+  #endif
+  // End of trinket special code
+  strip.begin();
+  strip.show(); // Initialize all pixels to 'off'
+}
+
+
+// sets pixel colour values to the end of sub-cycle rainbow
 // int t - time since the start of the rainbow
-void rainbow(int t) {
+void rainbow(uint32_t t) {
   int i, q;
-  q = t / 3; // hold for 300 ms
+  q = t / RAINBOW_HOLD;
   for(i = 0; i < NUM_PIXELS; ++i) {
-    strip.setPixelColor(i, Palette[(q + i) % 15]);
+    strip.setPixelColor(i, Palette[(q + i) % PALETTE_SIZE]);
   }
 }
 
 // determine if a blinking LED should be on
 // int on - time that LEDs should be on when blinking
 // int r  - the current time
-bool blink(int on, int r) {
-  int off, total, now;
+bool blink(uint32_t on, uint32_t r) {
+  uint32_t off, total, now;
   off = on / 2;
   total = on + off;
   now = r % total;
@@ -78,30 +87,30 @@ bool blink(int on, int r) {
 
 // sets pixel colors according to the current time
 // int t - the current time
-void tick(int t) {
-  int h, q, p, r, i;
-  t %= 36000;
-  h = t / 9000;
-  q = t % 9000;
-  if(q >= 8900) {
-    rainbow(q - 8900);
+void tick(uint32_t t) {
+  uint32_t h, q, p, r, i;
+  t %= CYCLE_TIME;
+  h = (t / SUBCYCLE_TIME) % CYCLE_LENGTH;
+  q = t % SUBCYCLE_TIME;
+  if(q >= (SUBCYCLE_TIME - RAINBOW_TIME)) {
+    rainbow(q - (SUBCYCLE_TIME - RAINBOW_TIME));
   } else {
-    p = q / 600;
-    r = q % 600;
+    p = q / INTRACYCLE_TIME;
+    r = q % INTRACYCLE_TIME;
     for(i = 0; i < NUM_PIXELS; ++i) {
-      strip.setPixelColor(i, blink(OnTime[h], r + 2 * i) ? Palette[p] : 0);
+      strip.setPixelColor(i, blink(OnTime[h], (r + i) % INTRACYCLE_TIME) ? Palette[p & PALETTE_SIZE] : 0);
     }
   }
 }
 
 // loop indefinitely setting pixel colour values based on time
 void loop() {
-  int t;
+  uint32_t t, p;
   while(true) {
-    // reset pattern every hour
-    for(t = 0; t < 36000; ++t) {
+    for(t = 0; t < CYCLE_TIME; ++t) {
       tick(t);
-      delay(100);
+      strip.show();
+      delay(LOOP_TIME);
     }
   }
 }
